@@ -18,6 +18,36 @@ func printTokens(n *uast.Node) {
 	}
 }
 
+func writeNode(n *uast.Node, flags uast.IncludeFlag) {
+	fmt.Printf("%v", n.InternalType)
+	if flags.Is(uast.IncludeProperties) {
+		fmt.Printf(" [%v]", n.Properties)
+	}
+	// if len(options) > 2 {
+	// 	fmt.Printf(" [%v]", n.Properties)
+	// }
+}
+
+func writeRule(n *uast.Node, flags uast.IncludeFlag) {
+	if len(n.Children) > 0 {
+		writeNode(n, flags)
+
+		fmt.Printf(" -> ")
+
+		for i, node := range n.Children {
+			if i > 0 {
+				fmt.Printf(",")
+			}
+			writeNode(node, flags)
+		}
+		fmt.Println()
+
+		for _, node := range n.Children {
+			writeRule(node, flags)
+		}
+	}
+}
+
 func main() {
 	client, err := bblfsh.NewClient("localhost:9432")
 	if err != nil {
@@ -72,4 +102,10 @@ func main() {
 	for _, n := range nodes {
 		fmt.Println(n)
 	}
+
+	fmt.Println("Basic rules")
+	writeRule(res.UAST, uast.IncludeChildren)
+
+	fmt.Printf("\nExtended rules")
+	writeRule(res.UAST, uast.IncludeProperties)
 }
