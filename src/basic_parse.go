@@ -1,14 +1,34 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 
 	"gopkg.in/bblfsh/client-go.v2"
-	"gopkg.in/bblfsh/client-go.v2/tools"
 	"gopkg.in/bblfsh/sdk.v1/uast"
 )
+
+type Rule struct {
+	consequent  *uast.Node
+	antecedents []*uast.Node
+}
+
+func filesList(searchDir string) ([]string, error) {
+
+	fileList := []string{}
+	err := filepath.Walk(searchDir, func(path string, f os.FileInfo, err error) error {
+		fileList = append(fileList, path)
+		return nil
+	})
+
+	for _, file := range fileList {
+		fmt.Println(file)
+	}
+
+	return fileList, err
+}
 
 func printTokens(n *uast.Node) {
 	fmt.Println(n.Token)
@@ -48,6 +68,37 @@ func writeRule(n *uast.Node, flags uast.IncludeFlag) {
 	}
 }
 
+func getRule(n *uast.Node) Rule {
+	rule := Rule{n, n.Children}
+	return rule
+}
+
+func getRules(n *uast.Node) []Rule {
+	var rules []Rule
+	if len(n.Children) > 0 {
+		rules = append(rules, getRule(n))
+
+		for _, node := range n.Children {
+			rules = append(rules, getRules(node)...)
+		}
+	}
+	return rules
+}
+
+func printRules(rules []Rule) {
+	for _, rule := range rules {
+
+		for i, node := range rule.antecedents {
+			if i > 0 {
+				fmt.Printf(",")
+			}
+			fmt.Printf("%v", node.InternalType)
+		}
+		fmt.Printf(" -> ")
+		fmt.Printf("%v\n", rule.consequent.InternalType)
+	}
+}
+
 func main() {
 	client, err := bblfsh.NewClient("localhost:9432")
 	if err != nil {
@@ -76,36 +127,41 @@ func main() {
 
 	}
 
-	fmt.Println("Printing tokens.")
-	printTokens(res.UAST)
+	var rules []Rule
+	rules = getRules(res.UAST)
 
-	fmt.Println("Pretty writing tokens.")
-	buf := bytes.NewBuffer(nil)
-	// uast.IncludeFlag = {uast}
-	IncludeCustom := uast.IncludeChildren |
-		uast.IncludeProperties |
-		uast.IncludeInternalType
-		// uast.IncludeTokens |
-	uast.Pretty(res.UAST, buf, IncludeCustom)
-	fmt.Printf("Buffer %v", buf)
-	// query := "//*[@roleIdentifier and not(@roleQualified)]"
+	fmt.Println("Printing parsed rules")
+	printRules(rules)
+	// fmt.Println("Printing tokens.")
+	// printTokens(res.UAST)
+	//
+	// fmt.Println("Pretty writing tokens.")
+	// buf := bytes.NewBuffer(nil)
+	// // uast.IncludeFlag = {uast}
+	// IncludeCustom := uast.IncludeChildren |
+	// 	uast.IncludeProperties |
+	// 	uast.IncludeInternalType
+	// 	// uast.IncludeTokens |
+	// uast.Pretty(res.UAST, buf, IncludeCustom)
+	// fmt.Printf("Buffer %v", buf)
+	// // query := "//*[@roleIdentifier and not(@roleQualified)]"
+	// // nodes, _ := tools.Filter(res.UAST, query)
+	// // for _, n := range nodes {
+	// // 	fmt.Println(n)
+	// // }
+	//
+	// strres, err := tools.FilterString(res.UAST, "name")
+	// fmt.Printf("Str result: %v\n", strres)
+	//
+	// query := "//*[@InternalType]"
 	// nodes, _ := tools.Filter(res.UAST, query)
 	// for _, n := range nodes {
 	// 	fmt.Println(n)
 	// }
-
-	strres, err := tools.FilterString(res.UAST, "name")
-	fmt.Printf("Str result: %v\n", strres)
-
-	query := "//*[@InternalType]"
-	nodes, _ := tools.Filter(res.UAST, query)
-	for _, n := range nodes {
-		fmt.Println(n)
-	}
-
-	fmt.Println("Basic rules")
-	writeRule(res.UAST, uast.IncludeChildren)
-
-	fmt.Printf("\nExtended rules")
-	writeRule(res.UAST, uast.IncludeProperties)
+	//
+	// fmt.Println("Basic rules")
+	// writeRule(res.UAST, uast.IncludeChildren)
+	//
+	// fmt.Printf("\nExtended rules")
+	// writeRule(res.UAST, uast.IncludeProperties)
 }
