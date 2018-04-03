@@ -48,7 +48,7 @@ func writeNode(n *uast.Node, flags uast.IncludeFlag) {
 	// }
 }
 
-func writeRule(n *uast.Node, flags uast.IncludeFlag) {
+func writeNodes(n *uast.Node, flags uast.IncludeFlag) {
 	if len(n.Children) > 0 {
 		writeNode(n, flags)
 
@@ -63,7 +63,7 @@ func writeRule(n *uast.Node, flags uast.IncludeFlag) {
 		fmt.Println()
 
 		for _, node := range n.Children {
-			writeRule(node, flags)
+			writeNodes(node, flags)
 		}
 	}
 }
@@ -85,7 +85,7 @@ func getRules(n *uast.Node) []Rule {
 	return rules
 }
 
-func printRules(rules []Rule) {
+func printRules(rules []Rule, flags uast.IncludeFlag) {
 	for _, rule := range rules {
 
 		for i, node := range rule.antecedents {
@@ -93,9 +93,15 @@ func printRules(rules []Rule) {
 				fmt.Printf(",")
 			}
 			fmt.Printf("%v", node.InternalType)
+			if flags.Is(uast.IncludeProperties) {
+				fmt.Printf("[%v]", node.Properties)
+			}
 		}
-		fmt.Printf(" -> ")
-		fmt.Printf("%v\n", rule.consequent.InternalType)
+		fmt.Printf("->")
+		fmt.Printf("%v", rule.consequent.InternalType)
+		if flags.Is(uast.IncludeProperties) {
+			fmt.Printf("[%v]\n", rule.consequent.Properties)
+		}
 	}
 }
 
@@ -105,12 +111,25 @@ func main() {
 		panic(err)
 	}
 
-	res, err := client.NewParseRequest().ReadFile("/home/hydra/projects/source_d/data/dummy.py").Do()
-	if err != nil {
-		panic(err)
-	}
-	if reflect.TypeOf(res.UAST).Name() != "Node" {
-		fmt.Errorf("Node must be the root of a UAST")
+	files, err := filesList("/home/hydra/repos/framework/")
+	for _, file := range files {
+		// res, err := client.NewParseRequest().ReadFile("/home/hydra/projects/source_d/data/dummy.py").Do()
+		res, err := client.NewParseRequest().ReadFile(file).Do()
+		if err != nil {
+			panic(err)
+		}
+		if reflect.TypeOf(res.UAST).Name() != "Node" {
+			fmt.Errorf("Node must be the root of a UAST")
+		}
+		IncludeCustom := uast.IncludeChildren |
+			uast.IncludeProperties |
+			uast.IncludeInternalType
+
+		var rules []Rule
+		rules = getRules(res.UAST)
+
+		fmt.Println("Printing parsed rules")
+		printRules(rules, IncludeCustom)
 	}
 
 	// fmt.Println("Iterating the UAST...")
@@ -120,18 +139,13 @@ func main() {
 	// 	fmt.Println(n)
 	// }
 
-	root := res.UAST
-	fmt.Println(root.Children[0].InternalType)
-	for _, n := range root.Children[0].Children {
-		fmt.Printf("%v := {%v || %v}\n", n.InternalType, n.Properties, n.Roles)
+	//
+	// root := res.UAST
+	// fmt.Println(root.Children[0].InternalType)
+	// for _, n := range root.Children[0].Children {
+	// 	fmt.Printf("%v := {%v || %v}\n", n.InternalType, n.Properties, n.Roles)
+	// }
 
-	}
-
-	var rules []Rule
-	rules = getRules(res.UAST)
-
-	fmt.Println("Printing parsed rules")
-	printRules(rules)
 	// fmt.Println("Printing tokens.")
 	// printTokens(res.UAST)
 	//
