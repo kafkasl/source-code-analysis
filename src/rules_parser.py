@@ -6,7 +6,23 @@ import numpy as np
 import bblfsh
 import argparse
 
-class Node(object):
+import os
+import fnmatch
+
+
+def recursive_glob(rootdir='.', pattern='*'):
+    """Search recursively for files matching a specified pattern.
+    Adapted from http://stackoverflow.com/questions/2186525/use-a-glob-to-find-files-recursively-in-python
+    """
+    matches = []
+    for root, dirnames, filenames in os.walk(rootdir):
+        for filename in fnmatch.filter(filenames, pattern):
+            matches.append(os.path.join(root, filename))
+
+    return matches
+
+
+class BaseNode(object):
     def __init__(self, roles, token, internal_type, properties):
         self.roles = roles
         self.token = token
@@ -14,6 +30,13 @@ class Node(object):
         self.properties = dict(properties)
         self.strict_similarity = False
         self._hash = None
+        self.vector = self.__to_vector__(roles)
+
+    def __to_vector__(self, roles):
+        vec = np.zeros(119)
+        for r in roles:
+            vec[r] = 1
+        return vec
 
     def __eq__(self, other):
         if self.strict_similarity:
@@ -39,17 +62,17 @@ class Node(object):
                 self._hash ^= hash(role)
         return self._hash
 
-    def __repr__(self):
-        text = "Node(roles=" + str([bblfsh.role_name(role) for role in self.roles]) + \
+    def __str__(self):
+        text = "BaseNode(roles=" + str([bblfsh.role_name(role) for role in self.roles]) + \
                ", token=" + self.token + \
                ", internal_type=" + self.internal_type + \
                ", properties=" + str(self.properties) + ")"
-        # text = "Node(roles=" + self.roles + \
+        # text = "BaseNode(roles=" + self.roles + \
         return text
 
-    def __str__(self):
-        return "Node[" + " ".join([bblfsh.role_name(role) for role in self.roles]) + "]"
-        # text = "Node : [" + " ".join([bblfsh.role_name(role) for role in self.roles]) + "]\n"
+    def __repr__(self):
+        return "BaseNode[" + " ".join([bblfsh.role_name(role) for role in self.roles]) + "]"
+        # text = "BaseNode : [" + " ".join([bblfsh.role_name(role) for role in self.roles]) + "]\n"
         # text += " * Properties: " + " ".join([p for p in self.properties]) + "\n"
         # text += " * Internal type: " + self.internal_type + "\n"
         # return text
@@ -81,45 +104,109 @@ class Rule(object):
                 self._hash ^= hash(antecedent)
         return self._hash
 
-    def __repr__(self):
-        text = "Rule(lhs=\n\t" + repr(self.lhs)  + \
-            ",\n     rhs=\n\t" + "\t".join([repr(a) for a in self.rhs])+ ")\n"
-        return text
-
     def __str__(self):
-        text = "Rule: \n" + str(self.lhs)
-        for i, a in enumerate(self.rhs):
-            text += str(a)
-            if i < len(self.rhs) - 1:
-                text += ","
-
+        text = "Rule(\n  lhs=\n    " + repr(self.lhs)  + \
+            ",\n  rhs=\n    " + "\n    ".join([repr(a) for a in self.rhs]) + "\n)"
         return text
 
+    def __repr__(self):
+        text = "Rule: " + repr(self.lhs) + "=>"
+        for i, a in enumerate(self.rhs):
+            text += repr(a)
+            if i < len(self.rhs) - 1:
+                text += "^"
 
-def get_properties(node):
-    props = []
-    for p in node.properties:
-        props.append(p)
-    return props
-
+        return text
 
 def get_rule(node):
     rhs = []
     for child in node.children:
-        rhs.append(Node(child.roles, child.token, child.internal_type, child.properties))
-    lhs = Node(node.roles, node.token, node.internal_type, node.properties)
+        rhs.append(BaseNode(child.roles, child.token, child.internal_type, child.properties))
+    lhs = BaseNode(node.roles, node.token, node.internal_type, node.properties)
     return Rule(rhs, lhs)
 
-
-def get_rules(node):
+def get_rules(root):
     rules = []
-    if len(node.children) > 0:
-        rules.append(get_rule(node))
+    if len(root.children) > 0:
 
-        for child in node.children:
-            rules.append(get_rule(child))
+        for node in root.children:
+            rule = get_rule(node)
+            rules.append(rule)
 
     return rules
+
+def rules_as_dict(rules):
+    rules_dict = defaultdict(int)
+    for rule in rules:
+        rules_dict[rule] += 1
+
+    return rules_dict
+
+
+def get_nodes(rules):
+    nodes = []
+    for rule in rules:
+        nodes.append(rule.lhs)
+        nodes.extend(rule.rhs)
+
+    return nodes
+
+
+def nodes_as_dict(nodes):
+    nodes_dict = defaultdict(int)
+    for node in nodes:
+        nodes_dict[node] += 1
+
+    return nodes_dict
+
+
+def process_uasts(uasts):
+    rules_dict = defaultdict(int)
+
+    rules = []
+    antecedents_length = []
+    for uast in uasts:
+        rules.extend(get_rules(uast))
+
+    for rule in rules_dict.keys():
+        antecedents_length.append(len(rule.rhs))
+
+    rules_dict = rules_as_dict(rules)
+    nodes = get_nodes(rules)
+    nodes_dict = nodes_as_dict(nodes)
+
+    print("Total number of UASTs: {}".format(len(uasts)))
+    print("Total rules: {}".format(len(rules)))
+    print("Total different rules: {}".format(len(rules_dict)))
+    print("Total nodes: {}".format(len(nodes)))
+    print("Total different nodes: {}".format(len(nodes_dict)))
+
+    for rule in rules_dict.keys():
+        antecedents_length.append(len(rule.rhs))
+
+    print("Mean rule lenght: {}".format(np.mean(antecedents_length)))
+    print("Std rules length: {}".format(np.std(antecedents_length)))
+
+    rules_count = list([(k, v) for k, v in rules_dict.items()])
+    nodes_count = list([(k, v) for k, v in nodes_dict.items()])
+
+    rules_count.sort(key=lambda x: -x[1])
+    nodes_count.sort(key=lambda x: -x[1])
+
+    print("Top five rules:")
+    for i in range(5):
+        print("{}. {}".format(i, rules_count[i]))
+
+    print("Top five nodes:")
+    for i in range(5):
+        print("{}. {}".format(i, nodes_count[i]))
+
+    vectors = np.matrix([k.vector for k, v in nodes_count])
+
+    with open('../results/rules.bin', 'w') as rules_file:
+        rules_file.write("\n".join(rules))
+
+    vectors.tofile('../results/vectors.bin')
 
 
 
@@ -132,39 +219,37 @@ if __name__ == '__main__':
     data = args.data
 
     client = bblfsh.BblfshClient("0.0.0.0:9432")
-    uast = client.parse(data).uast
+    files = recursive_glob('/home/hydra/projects', '*.py')
+
+    uasts = []
+    for file in files:
+        uast = client.parse(file).uast
+        uasts.append(uast)
     # print(uast)
     # "filter' allows you to use XPath queries to filter on result nodes:
     # print(bblfsh.filter(uast, "//Import[@roleImport and @roleDeclaration]//alias"))
-    rules = get_rules(uast)
-    for rule in rules:
-        # print(rule)
-        # print(repr(rule))
-        print(repr(rule))
 
-    rules_dict = defaultdict(int)
+    rules = []
 
-    rhs_lengths = []
-    uasts = [uast]
-    for uast in uasts:
-        rules = get_rules(uast)
-        for rule in rules:
-            rhs_lengths.append(len(rule.rhs))
-            rules_dict[rule] += 1
+    antecedents_length = []
 
-    np.mean(rhs_lengths)
-    np.std(rhs_lengths)
-    print("Rules dictionary:")
-    for k, v in rules_dict.items():
-        print("{}:{}".format(str(k), v))
-    # print(rules_dict)
+    process_uasts(uasts)
+    # print("Printing rules dictionary:")
+    # for k, v in rules_dict.items():
+    #     print("{}:{}\n".format(str(k), v))
+
+
+    # print("Representing rules dictionary:")
+    # for k, v in rules_dict.items():
+    #     print("{}:{}\n".format(repr(k), v))
+        # print(rules_dict)
         # filter\_[bool|string|number] must be used when using XPath functions returning
-    # these types:
-    # print(bblfsh.filter_bool(uast, "boolean(//*[@strtOffset or @endOffset])"))
-    # print(bblfsh.filter_string(uast, "name(//*[1])"))
-    # print(bblfsh.filter_number(uast, "count(//*)"))
+        # these types:
+        # print(bblfsh.filter_bool(uast, "boolean(//*[@strtOffset or @endOffset])"))
+        # print(bblfsh.filter_string(uast, "name(//*[1])"))
+        # print(bblfsh.filter_number(uast, "count(//*)"))
 
-    # You can also iterate on several tree iteration orders:
-    # it = bblfsh.iterator(uast, bblfsh.TreeOrder.PRE_ORDER)
-    # for node in it:
-    #     print(node.internal_type)
+        # You can also iterate on several tree iteration orders:
+        # it = bblfsh.iterator(uast, bblfsh.TreeOrder.PRE_ORDER)
+        # for node in it:
+        #     print(node.internal_type)
