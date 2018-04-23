@@ -1,13 +1,33 @@
 from collections import defaultdict
-from pprint import pprint
+from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans
 
+import matplotlib.pyplot as plt
 import numpy as np
 
+import pickle
 import bblfsh
 import argparse
-
 import os
 import fnmatch
+
+
+def plot_tsne(nodes_dict):
+
+    """
+    Compute the t-SNE dimensionality reduction values of input parameter and plot them in 2D
+    :param id_word_vec: vector containing the tuples (id, word, embedding) to be plotted
+    """
+    nodes = [node for node, _ in nodes_dict]
+    counts = [len(instances) for node, instances in nodes_dict]
+    tsne = TSNE(n_components=2)
+    X_tsne = tsne.fit_transform([BaseNode.roles_as_vector(n) for n in nodes])
+    plt.scatter(X_tsne[:, 0], X_tsne[:, 1], s=counts)
+
+    for i, roles in enumerate(nodes):
+        plt.annotate([bblfsh.role_name(role) for role in roles], (X_tsne[i, 0], X_tsne[i, 1]))
+
+    plt.show()
 
 
 def recursive_glob(rootdir='.', pattern='*'):
@@ -24,19 +44,28 @@ def recursive_glob(rootdir='.', pattern='*'):
 
 class BaseNode(object):
     def __init__(self, roles, token, internal_type, properties):
-        self.roles = roles
+        self.roles = tuple(roles)
         self.token = token
         self.internal_type = internal_type
         self.properties = dict(properties)
         self.strict_similarity = False
         self._hash = None
-        self.vector = self.__to_vector__(roles)
+        self._vector = None
 
-    def __to_vector__(self, roles):
+    def vector(self):
+        if self._vector is None:
+            self._vector = self.roles_as_vector(self.roles)
+        return self._vector
+
+    @staticmethod
+    def roles_as_vector(roles):
         vec = np.zeros(119)
         for r in roles:
             vec[r] = 1
         return vec
+
+    def named_roles(self):
+        return [bblfsh.role_name(role) for role in self.roles]
 
     def __eq__(self, other):
         if self.strict_similarity:
@@ -71,7 +100,7 @@ class BaseNode(object):
         return text
 
     def __repr__(self):
-        return "BaseNode[" + " ".join([bblfsh.role_name(role) for role in self.roles]) + "]"
+        return "BaseNode[" + " ".join(["{}/{}".format(bblfsh.role_name(role), role) for role in self.roles]) + "]"
         # text = "BaseNode : [" + " ".join([bblfsh.role_name(role) for role in self.roles]) + "]\n"
         # text += " * Properties: " + " ".join([p for p in self.properties]) + "\n"
         # text += " * Internal type: " + self.internal_type + "\n"
@@ -105,8 +134,8 @@ class Rule(object):
         return self._hash
 
     def __str__(self):
-        text = "Rule(\n  lhs=\n    " + repr(self.lhs)  + \
-            ",\n  rhs=\n    " + "\n    ".join([repr(a) for a in self.rhs]) + "\n)"
+        text = "Rule(lhs=" + str(self.lhs) + \
+            ",rhs=[".join([str(a) for a in self.rhs]) + "])"
         return text
 
     def __repr__(self):
@@ -118,27 +147,44 @@ class Rule(object):
 
         return text
 
+
 def get_rule(node):
+    if len(node.children) == 0:
+        token = "{} {}".format([bblfsh.role_name(i) for i in node.roles], node.token)
+        return [], BaseNode(node.roles, token, node.internal_type, node.properties)
+
+    rules = []
     rhs = []
-    for child in node.children:
-        rhs.append(BaseNode(child.roles, child.token, child.internal_type, child.properties))
-    lhs = BaseNode(node.roles, node.token, node.internal_type, node.properties)
-    return Rule(rhs, lhs)
+    tokens = "{}".format([bblfsh.role_name(i) for i in node.roles])
+    for i, child in enumerate(node.children):
+        c_rules, c_node = get_rule(child)
+        rhs.append(c_node)
+
+        # if i > 0:
+        tokens += " "
+
+        tokens += c_node.token
+        rules.extend(c_rules)
+
+    tokens += "\n"
+    lhs = BaseNode(node.roles, tokens, node.internal_type, node.properties)
+    rules.append(Rule(rhs, lhs))
+    return rules, lhs
+
 
 def get_rules(root):
     rules = []
     if len(root.children) > 0:
-
-        for node in root.children:
-            rule = get_rule(node)
-            rules.append(rule)
+        rules, tokens = get_rule(root)
+    # for i, _ in enumerate(rules):
+    #     print("rule lhs:\n{}".format(rules[i].lhs.token))
 
     return rules
 
 def rules_as_dict(rules):
-    rules_dict = defaultdict(int)
+    rules_dict = defaultdict(list)
     for rule in rules:
-        rules_dict[rule] += 1
+        rules_dict[rule].append(rule)
 
     return rules_dict
 
@@ -153,9 +199,9 @@ def get_nodes(rules):
 
 
 def nodes_as_dict(nodes):
-    nodes_dict = defaultdict(int)
+    nodes_dict = defaultdict(list)
     for node in nodes:
-        nodes_dict[node] += 1
+        nodes_dict[node.roles].append(node)
 
     return nodes_dict
 
@@ -166,7 +212,9 @@ def process_uasts(uasts):
     rules = []
     antecedents_length = []
     for uast in uasts:
-        rules.extend(get_rules(uast))
+        rule = get_rules(uast)
+        rules.extend(rule)
+
 
     for rule in rules_dict.keys():
         antecedents_length.append(len(rule.rhs))
@@ -174,6 +222,12 @@ def process_uasts(uasts):
     rules_dict = rules_as_dict(rules)
     nodes = get_nodes(rules)
     nodes_dict = nodes_as_dict(nodes)
+
+    for rule in rules:
+        print("\nLHS: {} => RHS: ".format(rule.lhs.token), end="")
+        for child in rule.rhs:
+            print("{}".format(child.token), end=",")
+
 
     print("Total number of UASTs: {}".format(len(uasts)))
     print("Total rules: {}".format(len(rules)))
@@ -184,56 +238,84 @@ def process_uasts(uasts):
     for rule in rules_dict.keys():
         antecedents_length.append(len(rule.rhs))
 
-    print("Mean rule lenght: {}".format(np.mean(antecedents_length)))
+    print("Mean rule length: {}".format(np.mean(antecedents_length)))
     print("Std rules length: {}".format(np.std(antecedents_length)))
 
     rules_count = list([(k, v) for k, v in rules_dict.items()])
     nodes_count = list([(k, v) for k, v in nodes_dict.items()])
 
-    rules_count.sort(key=lambda x: -x[1])
-    nodes_count.sort(key=lambda x: -x[1])
+    rules_count.sort(key=lambda x: -len(x[1]))
+    nodes_count.sort(key=lambda x: -len(x[1]))
 
-    print("Top five rules:")
-    for i in range(5):
-        print("{}. {}".format(i, rules_count[i]))
+    return rules_count, nodes_count
 
-    print("Top five nodes:")
-    for i in range(5):
-        print("{}. {}".format(i, nodes_count[i]))
 
-    vectors = np.matrix([k.vector for k, v in nodes_count])
+def print_statistics(rules_count, nodes_count):
+    print("Top twenty rules:")
+    for i in range(20):
+        print("{}. {}\n".format(i, rules_count[i][0]))
+
+    print("Top twenty nodes:")
+    for i in range(20):
+        print("{}. {}\n\t{}\n".format(i, [bblfsh.role_name(role_id) for role_id in nodes_count[i][0]],
+                                      nodes_count[i][1][0]))
 
     with open('../results/rules.bin', 'w') as rules_file:
-        rules_file.write("\n".join(rules))
+        rules_file.write("\n".join([str(r) for r in [r for r, count, in rules_count]]))
 
+
+def cluster_nodes(nodes_count):
+    vectors = np.matrix([BaseNode.roles_as_vector(k) for k, v in nodes_count])
     vectors.tofile('../results/vectors.bin')
 
+    kmeans = KMeans(init='k-means++', n_clusters=3, n_init=10)
+    kmeans.fit(vectors)
+    results = kmeans.predict(vectors)
+
+    plot_tsne(nodes_count)
+
+def save_roles(output, nodes_count):
+    roles_count = [(tuple([bblfsh.role_name(role_id) for role_id in n]), count) for n, count in nodes_count]
+    if not os.path.exists(output):
+        os.makedirs(output)
+    with open('{}/{}'.format(output, 'roles_count.pickle'), 'wb') as f:
+        pickle.dump(roles_count, f)
 
 
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--data', type=str, help="Path of the data.", required=True)
-
-    args = parser.parse_args()
-    data = args.data
+def main(data, output):
 
     client = bblfsh.BblfshClient("0.0.0.0:9432")
-    files = recursive_glob('/home/hydra/projects', '*.py')
+    files = recursive_glob(data, '*.py')
 
     uasts = []
     for file in files:
+        print("Processing file: {}".format(file))
         uast = client.parse(file).uast
-        uasts.append(uast)
+        if len(uast.children) > 0:
+            uasts.append(uast)
     # print(uast)
     # "filter' allows you to use XPath queries to filter on result nodes:
     # print(bblfsh.filter(uast, "//Import[@roleImport and @roleDeclaration]//alias"))
 
-    rules = []
 
-    antecedents_length = []
+    rules_count, nodes_count = process_uasts(uasts)
 
-    process_uasts(uasts)
+    # print_statistics(rules_count, nodes_count)
+    #
+    # cluster_nodes(nodes_count)
+    #
+    # save_roles(output, nodes_count)
+
+    return
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--data', type=str, help="Path of the data.", required=True)
+    parser.add_argument('-o', '--output', type=str, help="Path output to save the data.", required=True)
+
+    args = parser.parse_args()
+    main(args.data, args.output)
+
     # print("Printing rules dictionary:")
     # for k, v in rules_dict.items():
     #     print("{}:{}\n".format(str(k), v))
