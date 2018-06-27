@@ -1,7 +1,7 @@
 from collections import defaultdict
 from sklearn.manifold import TSNE
 from bblfsh import Node
-from structures import BaseNode, ExtNode
+from structures.extended_node import ExtNode
 from pprint import pprint
 
 import numpy as np
@@ -16,22 +16,6 @@ UP_SYMBOL = "UP"
 
 DOWN_SYMBOL = "DOWN"
 
-
-def plot_tsne(nodes_dict):
-    """
-    Compute the t-SNE dimensionality reduction values of input parameter and plot them in 2D
-    :param id_word_vec: vector containing the tuples (id, word, embedding) to be plotted
-    """
-    nodes = [node for node, _ in nodes_dict]
-    counts = [len(instances) for node, instances in nodes_dict]
-    tsne = TSNE(n_components=2)
-    X_tsne = tsne.fit_transform([BaseNode.roles_as_vector(n) for n in nodes])
-    plt.scatter(X_tsne[:, 0], X_tsne[:, 1], s=counts)
-
-    for i, roles in enumerate(nodes):
-        plt.annotate([bblfsh.role_name(role) for role in roles], (X_tsne[i, 0], X_tsne[i, 1]))
-
-    plt.show()
 
 
 def recursive_glob(rootdir='.', pattern='*'):
@@ -48,11 +32,11 @@ def recursive_glob(rootdir='.', pattern='*'):
 
 def extend_node(node, depth, num, leaves):
     if len(node.children) == 0:
-        ext_node = ExtNode.extend_bblfsh_node(node, depth, num)
+        ext_node = ExtNode(node, depth, num)
         leaves.append(ext_node)
         return ext_node, num + 1
     else:
-        ext_node = ExtNode.extend_bblfsh_node(node, depth, -1)
+        ext_node = ExtNode(node, depth, -1)
         new_children = [None] * len(node.children)
         for i, child in enumerate(node.children):
             new_children[i], num = extend_node(child, depth + 1, num, leaves)
@@ -174,7 +158,7 @@ def print_paths(file_paths):
             elif type(element) == str:
                 print("%s " % element, end="")
             else:
-                print("[%s] " % (element.internal_type), end="")
+                print("[%s] " % (element.token), end="")
         print()
 
 
